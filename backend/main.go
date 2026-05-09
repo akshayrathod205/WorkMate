@@ -18,9 +18,8 @@ var db *sql.DB
 func initDB() {
 	var err error
 
-	err = godotenv.Load()
-	if err != nil {
-		log.Fatalf("Error loading .env file")
+	if err = godotenv.Load(); err != nil {
+		log.Println("No .env file found, reading from environment")
 	}
 
 	jwtKey = []byte(os.Getenv("JWT_SECRET"))
