@@ -7,10 +7,10 @@ import (
 	"net/http"
 	"os"
 
-	_ "github.com/go-sql-driver/mysql"
 	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
 	"github.com/joho/godotenv"
+	_ "github.com/lib/pq"
 )
 
 var db *sql.DB
@@ -23,13 +23,16 @@ func initDB() {
 		log.Fatalf("Error loading .env file")
 	}
 
+	jwtKey = []byte(os.Getenv("JWT_SECRET"))
+
 	dbUser := os.Getenv("DB_USER")
 	dbPassword := os.Getenv("DB_PASSWORD")
 	dbName := os.Getenv("DB_NAME")
 	dbHost := os.Getenv("DB_HOST")
+	dbPort := os.Getenv("DB_PORT")
 
-	dsn := fmt.Sprintf("%s:%s@tcp(%s)/%s", dbUser, dbPassword, dbHost, dbName)
-	db, err = sql.Open("mysql", dsn)
+	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable", dbHost, dbPort, dbUser, dbPassword, dbName)
+	db, err = sql.Open("postgres", dsn)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -38,7 +41,7 @@ func initDB() {
 		log.Fatal(err)
 	}
 
-	fmt.Println("Connected to MySQL database")
+	fmt.Println("Connected to PostgreSQL database")
 }
 
 func main() {

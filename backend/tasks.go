@@ -26,19 +26,14 @@ func createTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res, err := db.Exec("INSERT INTO tasks (title, description, project_id, assigned_to, status) VALUES (?, ?, ?, ?, ?)", task.Title, task.Description, task.ProjectID, task.AssignedTo, task.Status)
+	var taskID int
+	err = db.QueryRow("INSERT INTO tasks (title, description, project_id, assigned_to, status) VALUES ($1, $2, $3, $4, $5) RETURNING id", task.Title, task.Description, task.ProjectID, task.AssignedTo, task.Status).Scan(&taskID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	taskID, err := res.LastInsertId()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	task.ID = int(taskID)
+	task.ID = taskID
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(task)
@@ -57,7 +52,7 @@ func getTasks(w http.ResponseWriter, r *http.Request) {
 	// If user is not a Manager, check if they are part of the project
 	if claims.Role != "Manager" {
 		var count int
-		err := db.QueryRow("SELECT COUNT(*) FROM project_members WHERE project_id = ? AND user_id = ?", projectID, claims.ID).Scan(&count)
+		err := db.QueryRow("SELECT COUNT(*) FROM project_members WHERE project_id = $1 AND user_id = $2", projectID, claims.ID).Scan(&count)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -69,14 +64,14 @@ func getTasks(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	rows, err := db.Query("SELECT id, title, description, project_id, assigned_to, status FROM tasks WHERE project_id = ?", projectID)
+	rows, err := db.Query("SELECT id, title, description, project_id, assigned_to, status FROM tasks WHERE project_id = $1", projectID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
 
-	var tasks []Task
+	tasks := make([]Task, 0)
 	for rows.Next() {
 		var task Task
 		err = rows.Scan(&task.ID, &task.Title, &task.Description, &task.ProjectID, &task.AssignedTo, &task.Status)
@@ -123,7 +118,7 @@ func updateTask(w http.ResponseWriter, r *http.Request) {
 
 	// Check if user is the assigned user
 	var assignedTo int
-	err = db.QueryRow("SELECT assigned_to FROM tasks WHERE id = ?", taskID).Scan(&assignedTo)
+	err = db.QueryRow("SELECT assigned_to FROM tasks WHERE id = $1", taskID).Scan(&assignedTo)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -134,7 +129,7 @@ func updateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = db.Exec("UPDATE tasks SET title = ?, description = ?, assigned_to = ?, status = ? WHERE id = ?", task.Title, task.Description, task.AssignedTo, task.Status, taskID)
+	_, err = db.Exec("UPDATE tasks SET title = $1, description = $2, assigned_to = $3, status = $4 WHERE id = $5", task.Title, task.Description, task.AssignedTo, task.Status, taskID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -160,7 +155,7 @@ func deleteTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = db.Exec("DELETE FROM tasks WHERE id = ?", taskID)
+	_, err = db.Exec("DELETE FROM tasks WHERE id = $1", taskID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

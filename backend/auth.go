@@ -2,17 +2,17 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
-	"github.com/dgrijalva/jwt-go"
+	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 )
 
-var jwtKey = []byte(os.Getenv("JWT_SECRET"))
+var jwtKey []byte
 
 type Credentials struct {
 	Id       int    `json:"id"`
@@ -27,7 +27,7 @@ type Claims struct {
 	Name  string `json:"name"`
 	Email string `json:"email"`
 	Role  string `json:"role"`
-	jwt.StandardClaims
+	jwt.RegisteredClaims
 }
 
 func registerUser(w http.ResponseWriter, r *http.Request) {
@@ -45,21 +45,14 @@ func registerUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Insert user into database
-	query := "INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)"
-	res, err := db.Exec(query, creds.Name, creds.Email, string(hashedPassword), creds.Role)
+	var userID int
+	query := "INSERT INTO users (name, email, password, role) VALUES ($1, $2, $3, $4) RETURNING id"
+	err = db.QueryRow(query, creds.Name, creds.Email, string(hashedPassword), creds.Role).Scan(&userID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	userID, err := res.LastInsertId()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// Send a JSON response with the user ID
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -76,7 +69,7 @@ func loginUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var storedCreds Credentials
-	err = db.QueryRow("SELECT email, password, id, role, name FROM users WHERE email = ?", creds.Email).Scan(&storedCreds.Email, &storedCreds.Password, &storedCreds.Id, &storedCreds.Role, &storedCreds.Name)
+	err = db.QueryRow("SELECT email, password, id, role, name FROM users WHERE email = $1", creds.Email).Scan(&storedCreds.Email, &storedCreds.Password, &storedCreds.Id, &storedCreds.Role, &storedCreds.Name)
 	if err != nil {
 		http.Error(w, "Invalid username or password", http.StatusUnauthorized)
 		return
@@ -96,8 +89,8 @@ func loginUser(w http.ResponseWriter, r *http.Request) {
 		Name:  storedCreds.Name,
 		Email: storedCreds.Email,
 		Role:  storedCreds.Role,
-		StandardClaims: jwt.StandardClaims{
-			ExpiresAt: expirationTime.Unix(),
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(expirationTime),
 		},
 	}
 
@@ -131,7 +124,7 @@ func validateToken(r *http.Request) (*Claims, error) {
 	})
 
 	if err != nil {
-		if err == jwt.ErrSignatureInvalid {
+		if errors.Is(err, jwt.ErrTokenSignatureInvalid) {
 			return nil, fmt.Errorf("invalid token signature")
 		}
 		return nil, fmt.Errorf("error parsing token")

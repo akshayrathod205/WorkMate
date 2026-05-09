@@ -13,7 +13,7 @@ const Projects = () => {
     }
     const fetchProjects = async () => {
       const response = await getProjects();
-      setProjects(response.projects);
+      setProjects(response.projects || []);
       console.log(response.projects);
     };
     fetchProjects();
