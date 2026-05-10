@@ -15,6 +15,15 @@ import (
 
 var db *sql.DB
 
+func healthCheck(w http.ResponseWriter, r *http.Request) {
+	if err := db.Ping(); err != nil {
+		http.Error(w, "db unreachable", http.StatusServiceUnavailable)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status":"ok"}`))
+}
+
 func initDB() {
 	var err error
 
@@ -22,13 +31,21 @@ func initDB() {
 		log.Println("No .env file found, reading from environment")
 	}
 
-	jwtKey = []byte(os.Getenv("JWT_SECRET"))
+	secret := os.Getenv("JWT_SECRET")
+	if secret == "" {
+		log.Fatal("JWT_SECRET environment variable is required")
+	}
+	jwtKey = []byte(secret)
 
 	dbUser := os.Getenv("DB_USER")
 	dbPassword := os.Getenv("DB_PASSWORD")
 	dbName := os.Getenv("DB_NAME")
 	dbHost := os.Getenv("DB_HOST")
 	dbPort := os.Getenv("DB_PORT")
+
+	if dbUser == "" || dbPassword == "" || dbName == "" || dbHost == "" || dbPort == "" {
+		log.Fatal("DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, and DB_NAME environment variables are required")
+	}
 
 	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable", dbHost, dbPort, dbUser, dbPassword, dbName)
 	db, err = sql.Open("postgres", dsn)
@@ -49,28 +66,41 @@ func main() {
 
 	router := mux.NewRouter()
 
+	// Public routes
+	router.HandleFunc("/api/health", healthCheck).Methods("GET")
 	router.HandleFunc("/api/register", registerUser).Methods("POST")
 	router.HandleFunc("/api/login", loginUser).Methods("POST")
-	router.HandleFunc("/api/users", getUsers).Methods("GET")
+	router.HandleFunc("/api/logout", logoutUser).Methods("POST")
 
-	router.HandleFunc("/api/projects", getProjects).Methods("GET")
-	router.HandleFunc("/api/projects/{id}", getSingleProject).Methods("GET")
-	router.HandleFunc("/api/projects/create", createProject).Methods("POST")
-	router.HandleFunc("/api/projects/{id}/team", addTeamMembers).Methods("POST")
-	router.HandleFunc("/api/projects/{id}/delete", deleteProject).Methods("DELETE")
-	router.HandleFunc("/api/projects/{id}/update", updateProject).Methods("PUT")
+	// Protected routes
+	protected := router.PathPrefix("/api").Subrouter()
+	protected.Use(authMiddleware)
 
-	router.HandleFunc("/api/tasks/{id}", getTasks).Methods("GET")
-	router.HandleFunc("/api/tasks/create", createTask).Methods("POST")
-	router.HandleFunc("/api/tasks/{id}/update", updateTask).Methods("PUT")
-	router.HandleFunc("/api/tasks/{id}/delete", deleteTask).Methods("DELETE")
+	protected.HandleFunc("/me", meHandler).Methods("GET")
+	protected.HandleFunc("/users", getUsers).Methods("GET")
 
-	corsHeaders := handlers.AllowedHeaders([]string{"Content-Type", "Authorization"})
-	corsOrigins := handlers.AllowedOrigins([]string{"http://localhost:3000"})
+	protected.HandleFunc("/projects", getProjects).Methods("GET")
+	protected.HandleFunc("/projects/{id}", getSingleProject).Methods("GET")
+	protected.HandleFunc("/projects/create", createProject).Methods("POST")
+	protected.HandleFunc("/projects/{id}/team", addTeamMembers).Methods("POST")
+	protected.HandleFunc("/projects/{id}/delete", deleteProject).Methods("DELETE")
+	protected.HandleFunc("/projects/{id}/update", updateProject).Methods("PUT")
+
+	protected.HandleFunc("/tasks/{id}", getTasks).Methods("GET")
+	protected.HandleFunc("/tasks/create", createTask).Methods("POST")
+	protected.HandleFunc("/tasks/{id}/update", updateTask).Methods("PUT")
+	protected.HandleFunc("/tasks/{id}/delete", deleteTask).Methods("DELETE")
+
+	allowedOrigin := os.Getenv("CORS_ORIGIN")
+	if allowedOrigin == "" {
+		allowedOrigin = "http://localhost:3000"
+	}
+	corsHeaders := handlers.AllowedHeaders([]string{"Content-Type"})
+	corsOrigins := handlers.AllowedOrigins([]string{allowedOrigin})
 	corsMethods := handlers.AllowedMethods([]string{"GET", "POST", "PUT", "DELETE", "OPTIONS"})
+	corsCredentials := handlers.AllowCredentials()
 
-	// Apply CORS middleware
-	corsRouter := handlers.CORS(corsHeaders, corsOrigins, corsMethods)(router)
+	corsRouter := handlers.CORS(corsHeaders, corsOrigins, corsMethods, corsCredentials)(router)
 
 	fmt.Println("HTTP server started on :8080")
 	log.Fatal(http.ListenAndServe(":8080", corsRouter))

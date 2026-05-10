@@ -19,10 +19,10 @@ go.work.sum
 # Vendor directory
 vendor/
 
-# Environment files
+# Environment files (never commit secrets)
 .env
 .env.local
-*.env
+.env.*.local
 
 # IDE / editor
 .vscode/

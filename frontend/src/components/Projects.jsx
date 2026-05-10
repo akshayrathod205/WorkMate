@@ -8,7 +8,7 @@ const Projects = () => {
   const [projects, setProjects] = useState([]);
 
   useEffect(() => {
-    if (!localStorage.getItem("token")) {
+    if (!localStorage.getItem("name")) {
       window.location.href = "/login";
     }
     const fetchProjects = async () => {

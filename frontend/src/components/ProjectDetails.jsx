@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { getProjectDetails, getTasks, updateTask } from "../api";
+import { ROLE_MANAGER, ROLE_TEAM_MEMBER, TASK_STATUSES } from "../auth";
 import "./Form.css"; // Import common CSS
 import Navbar from "./Navbar";
 
@@ -10,10 +11,10 @@ const ProjectDetails = () => {
   const [tasks, setTasks] = useState([]);
   const [userId, setUserId] = useState(null);
   const [filter, setFilter] = useState("all"); // 'all' or 'assigned'
-  const [role, setRole] = useState(localStorage.getItem("role"));
+  const role = localStorage.getItem("role");
 
   useEffect(() => {
-    if (!localStorage.getItem("token")) {
+    if (!localStorage.getItem("name")) {
       window.location.href = "/login";
     }
     const fetchProjectDetails = async () => {
@@ -69,7 +70,7 @@ const ProjectDetails = () => {
           ))}
         </ul>
         <br />
-        {(role === "Manager" || role === "Team Lead") && (
+        {role === ROLE_MANAGER && (
           <div>
             <Link to={`/projects/${id}/add-team-members`}>
               Add Team Members
@@ -90,16 +91,18 @@ const ProjectDetails = () => {
                 <h3>{task.title}</h3>
                 <p>{task.description}</p>
                 <p>Status: {task.status}</p>
-                {role === "Team Member" && task.assigned_to === userId && (
+                {role === ROLE_TEAM_MEMBER && task.assigned_to === userId && (
                   <select
                     value={task.status}
                     onChange={(e) =>
                       handleStatusChange(task.id, e.target.value)
                     }
                   >
-                    <option value="Not Started">Not Started</option>
-                    <option value="In Progress">In Progress</option>
-                    <option value="Completed">Completed</option>
+                    {TASK_STATUSES.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
                   </select>
                 )}
               </li>

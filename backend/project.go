@@ -1,106 +1,92 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
-	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/gorilla/mux"
+	"github.com/lib/pq"
 )
 
-// func createProject(w http.ResponseWriter, r *http.Request) {
-// 	claims, err := validateToken(r)
-// 	if err != nil {
-// 		http.Error(w, err.Error(), http.StatusUnauthorized)
-// 		return
-// 	}
-
-// 	var project Project
-// 	err = json.NewDecoder(r.Body).Decode(&project)
-// 	if err != nil {
-// 		http.Error(w, err.Error(), http.StatusBadRequest)
-// 		return
-// 	}
-
-// 	res, err := db.Exec("INSERT INTO projects (name, description, manager_id) VALUES (?, ?, ?)", project.Name, project.Description, claims.Id)
-// 	if err != nil {
-// 		http.Error(w, err.Error(), http.StatusInternalServerError)
-// 		return
-// 	}
-
-// 	projectID, err := res.LastInsertId()
-// 	if err != nil {
-// 		http.Error(w, err.Error(), http.StatusInternalServerError)
-// 		return
-// 	}
-
-// 	project.ID = int(projectID)
-
-// 	w.Header().Set("Content-Type", "application/json")
-// 	json.NewEncoder(w).Encode(project)
-// }
-
 func createProject(w http.ResponseWriter, r *http.Request) {
-	claims, err := validateToken(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
+	claims := claimsFromContext(r)
+
+	if claims.Role != RoleManager {
+		http.Error(w, "You are not authorized to create a project", http.StatusForbidden)
 		return
 	}
 
-	// print the claims
-	fmt.Println(claims.ID)
-
 	var project Project
-	err = json.NewDecoder(r.Body).Decode(&project)
-	if err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&project); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if err := validateProject(&project); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	if claims.Role != "Manager" {
-		http.Error(w, "You are not authorized to create a project", http.StatusUnauthorized)
-		return
-	}
-
 	var projectID int
-	err = db.QueryRow("INSERT INTO projects (name, description, manager_id) VALUES ($1, $2, $3) RETURNING id", project.Name, project.Description, claims.ID).Scan(&projectID)
+	err := db.QueryRow(
+		"INSERT INTO projects (name, description, manager_id) VALUES ($1, $2, $3) RETURNING id",
+		project.Name, project.Description, claims.ID,
+	).Scan(&projectID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "failed to create project", http.StatusInternalServerError)
 		return
 	}
 
 	project.ID = projectID
+	project.ManagerID = claims.ID
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(project)
 }
 
 func addTeamMembers(w http.ResponseWriter, r *http.Request) {
-	claims, err := validateToken(r)
+	claims := claimsFromContext(r)
+
+	if claims.Role != RoleManager {
+		http.Error(w, "You are not authorized to add team members to this project", http.StatusForbidden)
+		return
+	}
+
+	projectID, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
+		http.Error(w, "invalid project id", http.StatusBadRequest)
 		return
 	}
 
-	if claims.Role != "Manager" {
-		http.Error(w, "You are not authorized to add team members to this project", http.StatusUnauthorized)
+	owns, err := userOwnsProject(claims.ID, projectID)
+	if err != nil {
+		http.Error(w, "failed to verify project ownership", http.StatusInternalServerError)
 		return
 	}
-
-	vars := mux.Vars(r)
-	projectID := vars["id"]
+	if !owns {
+		http.Error(w, "You do not own this project", http.StatusForbidden)
+		return
+	}
 
 	var teamMembers []User
-	err = json.NewDecoder(r.Body).Decode(&teamMembers)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	if err := json.NewDecoder(r.Body).Decode(&teamMembers); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if len(teamMembers) == 0 {
+		http.Error(w, "no team members provided", http.StatusBadRequest)
 		return
 	}
 
 	for _, user := range teamMembers {
-		_, err = db.Exec("INSERT INTO project_members (project_id, user_id) VALUES ($1, $2)", projectID, user.ID)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+		if user.ID <= 0 {
+			http.Error(w, "invalid user id in payload", http.StatusBadRequest)
+			return
+		}
+		if _, err := db.Exec("INSERT INTO project_members (project_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING", projectID, user.ID); err != nil {
+			http.Error(w, "failed to add team members", http.StatusInternalServerError)
 			return
 		}
 	}
@@ -120,14 +106,12 @@ func getTeamMembers(projectID int) ([]User, error) {
 	teamMembers := make([]User, 0)
 	for rows.Next() {
 		var user User
-		err = rows.Scan(&user.ID, &user.Name, &user.Email, &user.Role)
-		if err != nil {
+		if err := rows.Scan(&user.ID, &user.Name, &user.Email, &user.Role); err != nil {
 			return nil, err
 		}
 		teamMembers = append(teamMembers, user)
 	}
 
-	// Check for errors from iterating over rows.
 	if err = rows.Err(); err != nil {
 		return nil, err
 	}
@@ -136,78 +120,103 @@ func getTeamMembers(projectID int) ([]User, error) {
 }
 
 func getProjects(w http.ResponseWriter, r *http.Request) {
-	claims, err := validateToken(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
-		return
-	}
-
-	fmt.Println("User Role:", claims.Role)
-	fmt.Println("User ID:", claims.ID)
+	claims := claimsFromContext(r)
 
 	query := "SELECT id, name, description, manager_id FROM projects"
-	if claims.Role == "Manager" {
+	if claims.Role == RoleManager {
 		query += " WHERE manager_id = $1"
 	} else {
 		query += " WHERE id IN (SELECT project_id FROM project_members WHERE user_id = $1)"
 	}
+	query += " ORDER BY id"
 
 	rows, err := db.Query(query, claims.ID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "failed to fetch projects", http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
 
 	projects := make([]Project, 0)
+	projectIDs := make([]int64, 0)
+	indexByID := make(map[int]int)
 	for rows.Next() {
-		var project Project
-		err = rows.Scan(&project.ID, &project.Name, &project.Description, &project.ManagerID)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+		var p Project
+		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.ManagerID); err != nil {
+			http.Error(w, "failed to read projects", http.StatusInternalServerError)
 			return
 		}
-
-		// Print project details for debugging
-		fmt.Printf("Project: %+v\n", project)
-
-		teamMembers, err := getTeamMembers(project.ID)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		project.TeamMembers = teamMembers
-
-		projects = append(projects, project)
+		p.TeamMembers = []User{}
+		indexByID[p.ID] = len(projects)
+		projects = append(projects, p)
+		projectIDs = append(projectIDs, int64(p.ID))
 	}
 
-	// Print projects for debugging
-	fmt.Printf("Projects: %+v\n", projects)
+	if len(projectIDs) > 0 {
+		memberRows, err := db.Query(
+			`SELECT pm.project_id, u.id, u.name, u.email, u.role
+			 FROM project_members pm
+			 JOIN users u ON u.id = pm.user_id
+			 WHERE pm.project_id = ANY($1)`,
+			pq.Array(projectIDs),
+		)
+		if err != nil {
+			http.Error(w, "failed to load team members", http.StatusInternalServerError)
+			return
+		}
+		defer memberRows.Close()
+
+		for memberRows.Next() {
+			var projectID int
+			var u User
+			if err := memberRows.Scan(&projectID, &u.ID, &u.Name, &u.Email, &u.Role); err != nil {
+				http.Error(w, "failed to read team members", http.StatusInternalServerError)
+				return
+			}
+			if idx, ok := indexByID[projectID]; ok {
+				projects[idx].TeamMembers = append(projects[idx].TeamMembers, u)
+			}
+		}
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"projects": projects})
 }
 
 func getSingleProject(w http.ResponseWriter, r *http.Request) {
-	_, err := validateToken(r)
+	claims := claimsFromContext(r)
+
+	projectID, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
+		http.Error(w, "invalid project id", http.StatusBadRequest)
 		return
 	}
 
-	vars := mux.Vars(r)
-	projectID := vars["id"]
+	allowed, err := userCanAccessProject(claims, projectID)
+	if err != nil {
+		http.Error(w, "failed to verify access", http.StatusInternalServerError)
+		return
+	}
+	if !allowed {
+		http.Error(w, "You do not have access to this project", http.StatusForbidden)
+		return
+	}
 
 	var project Project
-	err = db.QueryRow("SELECT id, name, description, manager_id FROM projects WHERE id = $1", projectID).Scan(&project.ID, &project.Name, &project.Description, &project.ManagerID)
+	err = db.QueryRow("SELECT id, name, description, manager_id FROM projects WHERE id = $1", projectID).
+		Scan(&project.ID, &project.Name, &project.Description, &project.ManagerID)
+	if err == sql.ErrNoRows {
+		http.Error(w, "project not found", http.StatusNotFound)
+		return
+	}
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "failed to fetch project", http.StatusInternalServerError)
 		return
 	}
 
 	teamMembers, err := getTeamMembers(project.ID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "failed to load team members", http.StatusInternalServerError)
 		return
 	}
 	project.TeamMembers = teamMembers
@@ -217,30 +226,42 @@ func getSingleProject(w http.ResponseWriter, r *http.Request) {
 }
 
 func updateProject(w http.ResponseWriter, r *http.Request) {
-	claims, err := validateToken(r)
+	claims := claimsFromContext(r)
+
+	if claims.Role != RoleManager {
+		http.Error(w, "You are not authorized to update this project", http.StatusForbidden)
+		return
+	}
+
+	projectID, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
+		http.Error(w, "invalid project id", http.StatusBadRequest)
 		return
 	}
 
-	if claims.Role != "Manager" {
-		http.Error(w, "You are not authorized to update this project", http.StatusUnauthorized)
+	owns, err := userOwnsProject(claims.ID, projectID)
+	if err != nil {
+		http.Error(w, "failed to verify project ownership", http.StatusInternalServerError)
 		return
 	}
-
-	vars := mux.Vars(r)
-	projectID := vars["id"]
+	if !owns {
+		http.Error(w, "You do not own this project", http.StatusForbidden)
+		return
+	}
 
 	var project Project
-	err = json.NewDecoder(r.Body).Decode(&project)
-	if err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&project); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if err := validateProject(&project); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	_, err = db.Exec("UPDATE projects SET name = $1, description = $2 WHERE id = $3", project.Name, project.Description, projectID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if _, err := db.Exec("UPDATE projects SET name = $1, description = $2 WHERE id = $3", project.Name, project.Description, projectID); err != nil {
+		http.Error(w, "failed to update project", http.StatusInternalServerError)
 		return
 	}
 
@@ -248,23 +269,27 @@ func updateProject(w http.ResponseWriter, r *http.Request) {
 }
 
 func deleteProject(w http.ResponseWriter, r *http.Request) {
-	claims, err := validateToken(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
+	claims := claimsFromContext(r)
+
+	if claims.Role != RoleManager {
+		http.Error(w, "You are not authorized to delete this project", http.StatusForbidden)
 		return
 	}
 
-	if claims.Role != "Manager" {
-		http.Error(w, "You are not authorized to delete this project", http.StatusUnauthorized)
+	projectID, err := strconv.Atoi(mux.Vars(r)["id"])
+	if err != nil {
+		http.Error(w, "invalid project id", http.StatusBadRequest)
 		return
 	}
 
-	vars := mux.Vars(r)
-	projectID := vars["id"]
-
-	_, err = db.Exec("DELETE FROM projects WHERE id = $1", projectID)
+	res, err := db.Exec("DELETE FROM projects WHERE id = $1 AND manager_id = $2", projectID, claims.ID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "failed to delete project", http.StatusInternalServerError)
+		return
+	}
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		http.Error(w, "project not found or not owned by you", http.StatusForbidden)
 		return
 	}
 

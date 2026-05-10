@@ -1,33 +1,20 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import Navbar from "./Navbar";
+import { createProject } from "../api";
 import "./Form.css";
 
 const CreateProject = () => {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const navigate = useNavigate();
-  const role = localStorage.getItem("role");
 
   const handleCreateProject = async (e) => {
     e.preventDefault();
-    const project = {
-      name,
-      description,
-    };
-
-    // Call API to create the project
-    const response = await fetch("http://localhost:8080/api/projects/create", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${localStorage.getItem("token")}`,
-      },
-      body: JSON.stringify(project),
-    });
-    if (response.ok) {
+    try {
+      await createProject({ name, description });
       navigate("/projects");
-    } else {
+    } catch (err) {
       alert("Failed to create project!");
     }
   };

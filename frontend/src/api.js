@@ -1,113 +1,73 @@
 // src/api.js
-const API_URL = "http://localhost:8080/api"; // Replace with your backend URL
+import { clearSession } from "./auth";
 
-const headers = {
-  "Content-Type": "application/json",
-};
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8080/api";
 
-export const registerUser = async (userData) => {
-  const response = await fetch(`${API_URL}/register`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(userData),
-  });
-  return response.json();
-};
+const PUBLIC_PATHS = new Set(["/login", "/register", "/logout", "/health"]);
 
-export const loginUser = async (credentials) => {
-  const response = await fetch(`${API_URL}/login`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(credentials),
-  });
-
-  const data = await response.json();
-  return data;
-};
-
-export const getProjects = async () => {
-  const token = localStorage.getItem("token");
-  const response = await fetch(`${API_URL}/projects`, {
-    method: "GET",
-    headers: {
-      ...headers,
-      Authorization: `Bearer ${token}`,
-    },
-  });
-  return response.json();
-};
-
-export const getProjectDetails = async (projectId) => {
-  const token = localStorage.getItem("token");
-  const response = await fetch(`${API_URL}/projects/${projectId}`, {
-    method: "GET",
-    headers: {
-      ...headers,
-      Authorization: `Bearer ${token}`,
-    },
-  });
-  return response.json();
-};
-
-export const addTeamMembers = async (projectId, members) => {
-  const token = localStorage.getItem("token");
-  const response = await fetch(`${API_URL}/projects/${projectId}/team`, {
-    method: "POST",
-    headers: {
-      ...headers,
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify(members),
-  });
-  return response.json();
-};
-
-export const getTasks = async (projectId) => {
-  const token = localStorage.getItem("token");
-  const response = await fetch(`${API_URL}/tasks/${projectId}`, {
-    method: "GET",
-    headers: {
-      ...headers,
-      Authorization: `Bearer ${token}`,
-    },
-  });
-  return response.json();
-};
-
-export const createTask = async (taskData) => {
-  const token = localStorage.getItem("token");
-  const response = await fetch(`${API_URL}/tasks/create`, {
-    method: "POST",
-    headers: {
-      ...headers,
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify(taskData),
-  });
-  return response.json();
-};
-
-export const getUsers = async () => {
-  const token = localStorage.getItem("token");
-  const response = await fetch(`${API_URL}/users`, {
-    method: "GET",
-    headers: {
-      ...headers,
-      Authorization: `Bearer ${token}`,
-    },
-  });
-  return response.json();
-};
-
-export const updateTask = async (taskId, taskData) => {
-  const token = localStorage.getItem("token");
-  const response = await fetch(`${API_URL}/tasks/${taskId}/update`, {
-    method: "PUT",
-    headers: {
-      ...headers,
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify(taskData),
-  });
+const request = async (path, { method = "GET", body } = {}) => {
+  const opts = {
+    method,
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+  };
+  if (body !== undefined) {
+    opts.body = JSON.stringify(body);
+  }
+  const response = await fetch(`${API_URL}${path}`, opts);
+  if (response.status === 401 && !PUBLIC_PATHS.has(path)) {
+    clearSession();
+    if (typeof window !== "undefined" && window.location.pathname !== "/login") {
+      window.location.href = "/login";
+    }
+  }
   return response;
 };
+
+const json = async (response) => {
+  if (response.status === 204) return null;
+  return response.json();
+};
+
+export const registerUser = async (userData) =>
+  json(await request("/register", { method: "POST", body: userData }));
+
+export const loginUser = async (credentials) => {
+  const response = await request("/login", { method: "POST", body: credentials });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || "login failed");
+  }
+  return response.json();
+};
+
+export const logoutUser = async () => request("/logout", { method: "POST" });
+
+export const getMe = async () => {
+  const response = await request("/me");
+  if (response.status === 401) return null;
+  if (!response.ok) throw new Error("failed to load session");
+  return response.json();
+};
+
+export const getProjects = async () => json(await request("/projects"));
+
+export const getProjectDetails = async (projectId) =>
+  json(await request(`/projects/${projectId}`));
+
+export const createProject = async (projectData) =>
+  json(await request("/projects/create", { method: "POST", body: projectData }));
+
+export const addTeamMembers = async (projectId, members) =>
+  json(await request(`/projects/${projectId}/team`, { method: "POST", body: members }));
+
+export const getTasks = async (projectId) =>
+  json(await request(`/tasks/${projectId}`));
+
+export const createTask = async (taskData) =>
+  json(await request("/tasks/create", { method: "POST", body: taskData }));
+
+export const updateTask = async (taskId, taskData) =>
+  request(`/tasks/${taskId}/update`, { method: "PUT", body: taskData });
+
+export const getUsers = async () => json(await request("/users"));

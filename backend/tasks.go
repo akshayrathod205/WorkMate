@@ -1,72 +1,96 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
-	"github.com/gorilla/mux"
 	"net/http"
+	"strconv"
+
+	"github.com/gorilla/mux"
 )
 
 func createTask(w http.ResponseWriter, r *http.Request) {
-	claims, err := validateToken(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
-		return
-	}
+	claims := claimsFromContext(r)
 
-	// Check if user is a Manager
-	if claims.Role == "Team Member" {
-		http.Error(w, "You are not authorized to create a task", http.StatusUnauthorized)
+	if claims.Role != RoleManager {
+		http.Error(w, "You are not authorized to create a task", http.StatusForbidden)
 		return
 	}
 
 	var task Task
-	err = json.NewDecoder(r.Body).Decode(&task)
-	if err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&task); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if err := validateTask(&task); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	var taskID int
-	err = db.QueryRow("INSERT INTO tasks (title, description, project_id, assigned_to, status) VALUES ($1, $2, $3, $4, $5) RETURNING id", task.Title, task.Description, task.ProjectID, task.AssignedTo, task.Status).Scan(&taskID)
+	owns, err := userOwnsProject(claims.ID, task.ProjectID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "failed to verify project ownership", http.StatusInternalServerError)
+		return
+	}
+	if !owns {
+		http.Error(w, "You do not own this project", http.StatusForbidden)
 		return
 	}
 
-	task.ID = taskID
+	if task.AssignedTo != 0 {
+		isMember, err := userIsProjectMember(task.AssignedTo, task.ProjectID)
+		if err != nil {
+			http.Error(w, "failed to verify assignee", http.StatusInternalServerError)
+			return
+		}
+		if !isMember {
+			http.Error(w, "Assignee is not a member of this project", http.StatusBadRequest)
+			return
+		}
+	}
+
+	err = db.QueryRow(
+		`INSERT INTO tasks (title, description, project_id, assigned_to, status, due_date)
+		 VALUES ($1, $2, $3, $4, $5, $6)
+		 RETURNING id, created_at, updated_at`,
+		task.Title, task.Description, task.ProjectID, task.AssignedTo, task.Status, task.DueDate,
+	).Scan(&task.ID, &task.CreatedAt, &task.UpdatedAt)
+	if err != nil {
+		http.Error(w, "failed to create task", http.StatusInternalServerError)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(task)
 }
 
 func getTasks(w http.ResponseWriter, r *http.Request) {
-	claims, err := validateToken(r)
+	claims := claimsFromContext(r)
+
+	projectID, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
+		http.Error(w, "invalid project id", http.StatusBadRequest)
 		return
 	}
 
-	vars := mux.Vars(r)
-	projectID := vars["id"]
-
-	// If user is not a Manager, check if they are part of the project
-	if claims.Role != "Manager" {
-		var count int
-		err := db.QueryRow("SELECT COUNT(*) FROM project_members WHERE project_id = $1 AND user_id = $2", projectID, claims.ID).Scan(&count)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		if count == 0 {
-			http.Error(w, "You are not part of this project", http.StatusUnauthorized)
-			return
-		}
+	allowed, err := userCanAccessProject(claims, projectID)
+	if err != nil {
+		http.Error(w, "failed to verify access", http.StatusInternalServerError)
+		return
+	}
+	if !allowed {
+		http.Error(w, "You do not have access to this project", http.StatusForbidden)
+		return
 	}
 
-	rows, err := db.Query("SELECT id, title, description, project_id, assigned_to, status FROM tasks WHERE project_id = $1", projectID)
+	rows, err := db.Query(
+		`SELECT id, title, description, project_id, assigned_to, status, due_date, created_at, updated_at
+		 FROM tasks WHERE project_id = $1 ORDER BY id`,
+		projectID,
+	)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "failed to fetch tasks", http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
@@ -74,12 +98,14 @@ func getTasks(w http.ResponseWriter, r *http.Request) {
 	tasks := make([]Task, 0)
 	for rows.Next() {
 		var task Task
-		err = rows.Scan(&task.ID, &task.Title, &task.Description, &task.ProjectID, &task.AssignedTo, &task.Status)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+		var assignedTo sql.NullInt64
+		if err := rows.Scan(&task.ID, &task.Title, &task.Description, &task.ProjectID, &assignedTo, &task.Status, &task.DueDate, &task.CreatedAt, &task.UpdatedAt); err != nil {
+			http.Error(w, "failed to read tasks", http.StatusInternalServerError)
 			return
 		}
-
+		if assignedTo.Valid {
+			task.AssignedTo = int(assignedTo.Int64)
+		}
 		tasks = append(tasks, task)
 	}
 
@@ -88,76 +114,109 @@ func getTasks(w http.ResponseWriter, r *http.Request) {
 		UserID int    `json:"userId"`
 	}
 
-	response := Response{
-		Tasks:  tasks,
-		UserID: claims.ID,
-	}
-
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if err := json.NewEncoder(w).Encode(Response{Tasks: tasks, UserID: claims.ID}); err != nil {
+		http.Error(w, "failed to encode response", http.StatusInternalServerError)
 	}
 }
 
 func updateTask(w http.ResponseWriter, r *http.Request) {
-	claims, err := validateToken(r)
+	claims := claimsFromContext(r)
+
+	taskID, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
+		http.Error(w, "invalid task id", http.StatusBadRequest)
 		return
 	}
 
-	vars := mux.Vars(r)
-	taskID := vars["id"]
-
 	var task Task
-	err = json.NewDecoder(r.Body).Decode(&task)
-	if err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&task); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if err := validateTask(&task); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	// Check if user is the assigned user
 	var assignedTo int
-	err = db.QueryRow("SELECT assigned_to FROM tasks WHERE id = $1", taskID).Scan(&assignedTo)
+	var projectID int
+	err = db.QueryRow("SELECT COALESCE(assigned_to, 0), project_id FROM tasks WHERE id = $1", taskID).Scan(&assignedTo, &projectID)
+	if err == sql.ErrNoRows {
+		http.Error(w, "task not found", http.StatusNotFound)
+		return
+	}
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "failed to fetch task", http.StatusInternalServerError)
 		return
 	}
 
-	if assignedTo != claims.ID {
-		http.Error(w, "You are not assigned to this task", http.StatusUnauthorized)
+	allowed := assignedTo == claims.ID
+	if !allowed && claims.Role == RoleManager {
+		owns, err := userOwnsProject(claims.ID, projectID)
+		if err != nil {
+			http.Error(w, "failed to verify project ownership", http.StatusInternalServerError)
+			return
+		}
+		allowed = owns
+	}
+	if !allowed {
+		http.Error(w, "You are not authorized to update this task", http.StatusForbidden)
 		return
 	}
 
-	_, err = db.Exec("UPDATE tasks SET title = $1, description = $2, assigned_to = $3, status = $4 WHERE id = $5", task.Title, task.Description, task.AssignedTo, task.Status, taskID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if _, err := db.Exec(
+		`UPDATE tasks SET title = $1, description = $2, assigned_to = $3, status = $4, due_date = $5
+		 WHERE id = $6`,
+		task.Title, task.Description, task.AssignedTo, task.Status, task.DueDate, taskID,
+	); err != nil {
+		http.Error(w, "failed to update task", http.StatusInternalServerError)
 		return
 	}
 
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"message": "Task updated successfully!"})
 }
 
 func deleteTask(w http.ResponseWriter, r *http.Request) {
-	claims, err := validateToken(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
+	claims := claimsFromContext(r)
+
+	if claims.Role != RoleManager {
+		http.Error(w, "You are not authorized to delete a task", http.StatusForbidden)
 		return
 	}
 
-	vars := mux.Vars(r)
-	taskID := vars["id"]
-
-	// Check if user is Manager, if yes then allow to delete
-	if claims.Role == "Team Member" {
-		http.Error(w, "You are not authorized to delete a task", http.StatusUnauthorized)
+	taskID, err := strconv.Atoi(mux.Vars(r)["id"])
+	if err != nil {
+		http.Error(w, "invalid task id", http.StatusBadRequest)
 		return
 	}
 
-	_, err = db.Exec("DELETE FROM tasks WHERE id = $1", taskID)
+	var projectID int
+	err = db.QueryRow("SELECT project_id FROM tasks WHERE id = $1", taskID).Scan(&projectID)
+	if err == sql.ErrNoRows {
+		http.Error(w, "task not found", http.StatusNotFound)
+		return
+	}
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "failed to fetch task", http.StatusInternalServerError)
+		return
+	}
+
+	owns, err := userOwnsProject(claims.ID, projectID)
+	if err != nil {
+		http.Error(w, "failed to verify project ownership", http.StatusInternalServerError)
+		return
+	}
+	if !owns {
+		http.Error(w, "You do not own this project", http.StatusForbidden)
+		return
+	}
+
+	if _, err := db.Exec("DELETE FROM tasks WHERE id = $1", taskID); err != nil {
+		http.Error(w, "failed to delete task", http.StatusInternalServerError)
 		return
 	}
 

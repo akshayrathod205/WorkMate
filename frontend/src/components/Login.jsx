@@ -10,14 +10,13 @@ const Login = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    const response = await loginUser({ email, password });
-    if (response.token) {
-      localStorage.setItem("token", response.token);
+    try {
+      const response = await loginUser({ email, password });
       localStorage.setItem("name", response.name);
       localStorage.setItem("role", response.role);
       alert("Login successful!");
       navigate("/projects");
-    } else {
+    } catch (err) {
       alert("Login failed!");
     }
   };

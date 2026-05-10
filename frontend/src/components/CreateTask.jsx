@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { createTask } from "../api";
+import { TASK_STATUSES } from "../auth";
 import "./Form.css";
 import Navbar from "./Navbar";
 
@@ -9,11 +10,11 @@ const CreateTask = () => {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [assignedTo, setAssignedTo] = useState("");
-  const [status, setStatus] = useState("Not Started");
+  const [status, setStatus] = useState(TASK_STATUSES[0]);
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (!localStorage.getItem("token")) {
+    if (!localStorage.getItem("name")) {
       window.location.href = "/login";
     }
   }, []);
@@ -69,9 +70,11 @@ const CreateTask = () => {
           <div>
             <label>Status:</label>
             <select value={status} onChange={(e) => setStatus(e.target.value)}>
-              <option value="Not Started">Not Started</option>
-              <option value="In Progress">In Progress</option>
-              <option value="Completed">Completed</option>
+              {TASK_STATUSES.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
             </select>
           </div>
           <button type="submit">Create Task</button>

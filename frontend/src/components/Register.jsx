@@ -1,21 +1,26 @@
 import React, { useState } from "react";
 import { registerUser } from "../api";
 import { useNavigate } from "react-router-dom";
+import { ROLE_MANAGER, ROLE_TEAM_MEMBER } from "../auth";
 import "./Form.css";
 
 const Register = () => {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [role, setRole] = useState("Team Member");
+  const [role, setRole] = useState(ROLE_TEAM_MEMBER);
   const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    const response = await registerUser({ name, email, password, role });
-    if (response.id) {
-      navigate("/login");
-    } else {
+    try {
+      const response = await registerUser({ name, email, password, role });
+      if (response && response.id) {
+        navigate("/login");
+      } else {
+        alert("Registration failed!");
+      }
+    } catch (err) {
       alert("Registration failed!");
     }
   };
@@ -62,9 +67,8 @@ const Register = () => {
         <div className="form-group">
           <label style={{ fontWeight: "bold" }}>Role:</label>
           <select value={role} onChange={(e) => setRole(e.target.value)}>
-            <option value="Team Member">Team Member</option>
-            <option value="Team Lead">Team Lead</option>
-            <option value="Manager">Manager</option>
+            <option value={ROLE_TEAM_MEMBER}>Team Member</option>
+            <option value={ROLE_MANAGER}>Manager</option>
           </select>
         </div>
         <button type="submit" className="btn-primary">

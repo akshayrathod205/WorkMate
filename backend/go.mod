@@ -13,4 +13,7 @@ require (
 	golang.org/x/crypto v0.38.0
 )
 
-require github.com/felixge/httpsnoop v1.0.3 // indirect
+require (
+	github.com/DATA-DOG/go-sqlmock v1.5.2 // indirect
+	github.com/felixge/httpsnoop v1.0.3 // indirect
+)

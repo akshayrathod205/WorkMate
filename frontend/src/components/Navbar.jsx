@@ -2,13 +2,18 @@ import React from "react";
 import { Link } from "react-router-dom";
 import "./Navbar.css"; // Import the CSS file
 import { useNavigate } from "react-router-dom";
+import { logoutUser } from "../api";
+import { clearSession } from "../auth";
 
 const Navbar = () => {
   const navigate = useNavigate();
-  const handleSignOut = () => {
-    localStorage.removeItem("token");
-    localStorage.removeItem("name");
-    localStorage.removeItem("role");
+  const handleSignOut = async () => {
+    try {
+      await logoutUser();
+    } catch (e) {
+      // ignore — clear client state regardless
+    }
+    clearSession();
     window.location.href = "/login";
   };
 
