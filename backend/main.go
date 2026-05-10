@@ -97,6 +97,7 @@ func main() {
 	protected.HandleFunc("/comments/{id}", deleteComment).Methods("DELETE")
 
 	protected.HandleFunc("/projects/{id}/events", listProjectEvents).Methods("GET")
+	protected.HandleFunc("/projects/{id}/stream", streamProjectEvents).Methods("GET")
 
 	allowedOrigin := os.Getenv("CORS_ORIGIN")
 	if allowedOrigin == "" {

@@ -133,7 +133,7 @@ func createComment(w http.ResponseWriter, r *http.Request) {
 	if len(snippet) > 80 {
 		snippet = snippet[:80] + "…"
 	}
-	recordEvent(&projectID, claims.ID, EventCommentCreated, map[string]interface{}{
+	recordEvent(&projectID, claims.ID, claims.Name, EventCommentCreated, map[string]interface{}{
 		"task_id":    taskID,
 		"comment_id": c.ID,
 		"snippet":    snippet,

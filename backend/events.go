@@ -31,9 +31,10 @@ type Event struct {
 	CreatedAt time.Time              `json:"created_at"`
 }
 
-// recordEvent inserts an audit row. Failures are logged, not returned —
-// the caller's primary write should not be undone if the audit insert fails.
-func recordEvent(projectID *int, actorID int, kind string, payload map[string]interface{}) {
+// recordEvent inserts an audit row and broadcasts it to SSE subscribers.
+// Failures are logged, not returned — the caller's primary write should not
+// be undone if the audit insert fails.
+func recordEvent(projectID *int, actorID int, actorName, kind string, payload map[string]interface{}) {
 	if payload == nil {
 		payload = map[string]interface{}{}
 	}
@@ -42,12 +43,26 @@ func recordEvent(projectID *int, actorID int, kind string, payload map[string]in
 		log.Printf("recordEvent: marshal failed: %v", err)
 		return
 	}
-	if _, err := db.Exec(
-		"INSERT INTO events (project_id, actor_id, kind, payload) VALUES ($1, $2, $3, $4)",
+	var id int64
+	var createdAt time.Time
+	if err := db.QueryRow(
+		"INSERT INTO events (project_id, actor_id, kind, payload) VALUES ($1, $2, $3, $4) RETURNING id, created_at",
 		projectID, actorID, kind, body,
-	); err != nil {
+	).Scan(&id, &createdAt); err != nil {
 		log.Printf("recordEvent: insert failed: %v", err)
+		return
 	}
+
+	actorIDCopy := actorID
+	hub.publish(Event{
+		ID:        id,
+		ProjectID: projectID,
+		ActorID:   &actorIDCopy,
+		ActorName: actorName,
+		Kind:      kind,
+		Payload:   payload,
+		CreatedAt: createdAt,
+	})
 }
 
 func listProjectEvents(w http.ResponseWriter, r *http.Request) {

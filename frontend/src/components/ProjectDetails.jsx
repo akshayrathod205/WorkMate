@@ -8,6 +8,7 @@ import { getProjectDetails, getTasks, updateTask } from "../api";
 import { useAuth } from "../AuthContext";
 import { ROLE_MANAGER, TASK_STATUSES } from "../auth";
 import { useDebounce } from "../hooks/useDebounce";
+import { useEventSource } from "../hooks/useEventSource";
 import { PageContainer } from "./ui/PageContainer";
 import { Skeleton } from "./ui/Skeleton";
 import { Avatar } from "./ui/Avatar";
@@ -26,6 +27,8 @@ const ProjectDetails = () => {
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search, 250);
   const [selectedTaskId, setSelectedTaskId] = useState(null);
+
+  useEventSource(projectId);
 
   const projectQuery = useQuery({
     queryKey: ["project", projectId],

@@ -62,10 +62,11 @@ func createTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	recordEvent(&task.ProjectID, claims.ID, EventTaskCreated, map[string]interface{}{
+	recordEvent(&task.ProjectID, claims.ID, claims.Name, EventTaskCreated, map[string]interface{}{
 		"task_id":     task.ID,
 		"title":       task.Title,
 		"assigned_to": task.AssignedTo,
+		"status":      task.Status,
 	})
 
 	w.Header().Set("Content-Type", "application/json")
@@ -201,7 +202,7 @@ func updateTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if prevStatus != task.Status {
-		recordEvent(&projectID, claims.ID, EventTaskStatusMoved, map[string]interface{}{
+		recordEvent(&projectID, claims.ID, claims.Name, EventTaskStatusMoved, map[string]interface{}{
 			"task_id": taskID,
 			"title":   task.Title,
 			"from":    prevStatus,
@@ -257,7 +258,7 @@ func deleteTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	recordEvent(&projectID, claims.ID, EventTaskDeleted, map[string]interface{}{
+	recordEvent(&projectID, claims.ID, claims.Name, EventTaskDeleted, map[string]interface{}{
 		"task_id": taskID,
 		"title":   title,
 	})

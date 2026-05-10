@@ -42,7 +42,7 @@ func createProject(w http.ResponseWriter, r *http.Request) {
 	project.ID = projectID
 	project.ManagerID = claims.ID
 
-	recordEvent(&project.ID, claims.ID, EventProjectCreated, map[string]interface{}{
+	recordEvent(&project.ID, claims.ID, claims.Name, EventProjectCreated, map[string]interface{}{
 		"name": project.Name,
 	})
 
@@ -101,7 +101,7 @@ func addTeamMembers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(addedIDs) > 0 {
-		recordEvent(&projectID, claims.ID, EventMembersAdded, map[string]interface{}{
+		recordEvent(&projectID, claims.ID, claims.Name, EventMembersAdded, map[string]interface{}{
 			"user_ids": addedIDs,
 			"count":    len(addedIDs),
 		})
@@ -281,7 +281,7 @@ func updateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	recordEvent(&projectID, claims.ID, EventProjectUpdated, map[string]interface{}{
+	recordEvent(&projectID, claims.ID, claims.Name, EventProjectUpdated, map[string]interface{}{
 		"name": project.Name,
 	})
 
