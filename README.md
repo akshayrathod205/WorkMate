@@ -58,29 +58,6 @@ cd backend && go run .
 cd frontend && npm install && npm run dev
 ```
 
-## API
-
-All under `/api`. Authenticated routes require the `auth_token` cookie (set by `/login`).
-
-| Method | Path | Auth | Notes |
-|---|---|---|---|
-| GET | `/health` | public | Health probe. |
-| POST | `/register` | public | `{ name, email, password, role }` — role ∈ `Manager`, `Team Member` |
-| POST | `/login` | public | Sets `auth_token` cookie. |
-| POST | `/logout` | public | Clears cookie. |
-| GET | `/me` | yes | Current user. |
-| GET | `/users` | Manager | |
-| GET | `/projects` | yes | Returns projects scoped to caller. |
-| GET | `/projects/{id}` | member/manager | |
-| POST | `/projects/create` | Manager | |
-| POST | `/projects/{id}/team` | Manager (owner) | Add members. |
-| PUT | `/projects/{id}/update` | Manager (owner) | |
-| DELETE | `/projects/{id}/delete` | Manager (owner) | |
-| GET | `/tasks/{projectId}` | member/manager (owner) | |
-| POST | `/tasks/create` | Manager (owner) | |
-| PUT | `/tasks/{id}/update` | assignee or owning Manager | |
-| DELETE | `/tasks/{id}/delete` | Manager (owner) | |
-
 ## Roles
 
 - `Manager` — owns projects they create. Can create/update/delete projects, add team members, create/delete tasks within projects they own.
@@ -98,7 +75,6 @@ init.sql      Schema (run once by Postgres on first init)
 ## Known TODOs
 
 - Real migration tooling (golang-migrate / goose) — currently `init.sql` is one-shot
-- Package restructure into `internal/` (Server struct vs global vars)
 - Broader test coverage
 
 ## License
