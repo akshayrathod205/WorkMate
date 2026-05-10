@@ -50,3 +50,32 @@ CREATE TRIGGER trg_tasks_updated_at
     BEFORE UPDATE ON tasks
     FOR EACH ROW
     EXECUTE FUNCTION set_updated_at();
+
+CREATE TABLE IF NOT EXISTS comments (
+    id         SERIAL PRIMARY KEY,
+    task_id    INT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    user_id    INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    body       TEXT NOT NULL CHECK (length(body) > 0),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_comments_task_id_created_at ON comments(task_id, created_at);
+
+DROP TRIGGER IF EXISTS trg_comments_updated_at ON comments;
+CREATE TRIGGER trg_comments_updated_at
+    BEFORE UPDATE ON comments
+    FOR EACH ROW
+    EXECUTE FUNCTION set_updated_at();
+
+CREATE TABLE IF NOT EXISTS events (
+    id         BIGSERIAL PRIMARY KEY,
+    project_id INT REFERENCES projects(id) ON DELETE CASCADE,
+    actor_id   INT REFERENCES users(id) ON DELETE SET NULL,
+    kind       VARCHAR(50) NOT NULL,
+    payload    JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_events_project_id_created_at ON events(project_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_events_actor_id_created_at  ON events(actor_id, created_at DESC);

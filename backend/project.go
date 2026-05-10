@@ -42,6 +42,10 @@ func createProject(w http.ResponseWriter, r *http.Request) {
 	project.ID = projectID
 	project.ManagerID = claims.ID
 
+	recordEvent(&project.ID, claims.ID, EventProjectCreated, map[string]interface{}{
+		"name": project.Name,
+	})
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(project)
 }
@@ -80,15 +84,27 @@ func addTeamMembers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	addedIDs := make([]int, 0, len(teamMembers))
 	for _, user := range teamMembers {
 		if user.ID <= 0 {
 			http.Error(w, "invalid user id in payload", http.StatusBadRequest)
 			return
 		}
-		if _, err := db.Exec("INSERT INTO project_members (project_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING", projectID, user.ID); err != nil {
+		res, err := db.Exec("INSERT INTO project_members (project_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING", projectID, user.ID)
+		if err != nil {
 			http.Error(w, "failed to add team members", http.StatusInternalServerError)
 			return
 		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			addedIDs = append(addedIDs, user.ID)
+		}
+	}
+
+	if len(addedIDs) > 0 {
+		recordEvent(&projectID, claims.ID, EventMembersAdded, map[string]interface{}{
+			"user_ids": addedIDs,
+			"count":    len(addedIDs),
+		})
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -264,6 +280,10 @@ func updateProject(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to update project", http.StatusInternalServerError)
 		return
 	}
+
+	recordEvent(&projectID, claims.ID, EventProjectUpdated, map[string]interface{}{
+		"name": project.Name,
+	})
 
 	w.WriteHeader(http.StatusOK)
 }

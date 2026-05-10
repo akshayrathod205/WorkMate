@@ -1,86 +1,103 @@
-import React, { useEffect, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
-import { createTask } from "../api";
+import { useNavigate, useParams, Link } from "react-router-dom";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { ArrowLeft } from "lucide-react";
+import { createTask, getProjectDetails } from "../api";
+import { taskSchema } from "../schemas";
 import { TASK_STATUSES } from "../auth";
-import "./Form.css";
-import Navbar from "./Navbar";
+import { PageContainer } from "./ui/PageContainer";
+import { Spinner } from "./ui/Spinner";
 
 const CreateTask = () => {
   const { id } = useParams();
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [assignedTo, setAssignedTo] = useState("");
-  const [status, setStatus] = useState(TASK_STATUSES[0]);
+  const projectId = parseInt(id, 10);
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
 
-  useEffect(() => {
-    if (!localStorage.getItem("name")) {
-      window.location.href = "/login";
-    }
-  }, []);
+  const { data: project } = useQuery({
+    queryKey: ["project", projectId],
+    queryFn: () => getProjectDetails(projectId),
+  });
 
-  const handleCreateTask = async (e) => {
-    e.preventDefault();
-    const task = {
-      title,
-      description,
-      project_id: parseInt(id, 10),
-      assigned_to: parseInt(assignedTo, 10),
-      status,
-    };
-    await createTask(task);
-    navigate(`/projects/${id}`);
-  };
+  const {
+    register,
+    handleSubmit,
+    formState: { errors },
+  } = useForm({
+    resolver: zodResolver(taskSchema),
+    defaultValues: { status: TASK_STATUSES[0], description: "" },
+  });
+
+  const mutation = useMutation({
+    mutationFn: (values) => createTask({ ...values, project_id: projectId }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["tasks", projectId] });
+      toast.success("Task created");
+      navigate(`/projects/${projectId}`);
+    },
+    onError: () => toast.error("Failed to create task"),
+  });
+
+  const members = project?.team_members ?? [];
 
   return (
-    <div>
-      <Navbar />
-      <br />
-      <br />
-      <div className="container form-container">
-        <h2>Create Task</h2>
-        <form onSubmit={handleCreateTask}>
+    <PageContainer>
+      <Link to={`/projects/${projectId}`} className="mb-4 inline-flex items-center gap-1 text-sm text-slate-600 hover:underline dark:text-slate-400">
+        <ArrowLeft className="h-4 w-4" />
+        Back to project
+      </Link>
+
+      <div className="card mx-auto max-w-2xl p-6">
+        <h1 className="text-xl font-semibold text-slate-900 dark:text-slate-100">New task</h1>
+        {project && <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">in {project.name}</p>}
+
+        <form className="mt-6 space-y-4" onSubmit={handleSubmit((v) => mutation.mutate(v))} noValidate>
           <div>
-            <label>Title:</label>
-            <input
-              type="text"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              required
-            />
+            <label className="label" htmlFor="title">Title</label>
+            <input id="title" className="input" placeholder="What needs to be done?" {...register("title")} />
+            {errors.title && <p className="mt-1 text-xs text-red-600">{errors.title.message}</p>}
           </div>
+
           <div>
-            <label>Description:</label>
-            <input
-              type="text"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              required
-            />
+            <label className="label" htmlFor="description">Description</label>
+            <textarea id="description" className="input min-h-[100px]" {...register("description")} />
           </div>
-          <div>
-            <label>Assigned To (User ID):</label>
-            <input
-              type="text"
-              value={assignedTo}
-              onChange={(e) => setAssignedTo(e.target.value)}
-              required
-            />
+
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <label className="label" htmlFor="assigned_to">Assignee</label>
+              <select id="assigned_to" className="input" {...register("assigned_to")} defaultValue="">
+                <option value="" disabled>Select a team member</option>
+                {members.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                  </option>
+                ))}
+              </select>
+              {errors.assigned_to && <p className="mt-1 text-xs text-red-600">{errors.assigned_to.message}</p>}
+            </div>
+
+            <div>
+              <label className="label" htmlFor="status">Status</label>
+              <select id="status" className="input" {...register("status")}>
+                {TASK_STATUSES.map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+            </div>
           </div>
-          <div>
-            <label>Status:</label>
-            <select value={status} onChange={(e) => setStatus(e.target.value)}>
-              {TASK_STATUSES.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Link to={`/projects/${projectId}`} className="btn-secondary">Cancel</Link>
+            <button type="submit" className="btn-primary" disabled={mutation.isPending}>
+              {mutation.isPending ? <Spinner className="text-white" /> : "Create task"}
+            </button>
           </div>
-          <button type="submit">Create Task</button>
         </form>
       </div>
-    </div>
+    </PageContainer>
   );
 };
 

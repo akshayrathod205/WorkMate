@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gorilla/mux"
 )
@@ -61,6 +62,12 @@ func createTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	recordEvent(&task.ProjectID, claims.ID, EventTaskCreated, map[string]interface{}{
+		"task_id":     task.ID,
+		"title":       task.Title,
+		"assigned_to": task.AssignedTo,
+	})
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(task)
 }
@@ -84,11 +91,25 @@ func getTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := db.Query(
-		`SELECT id, title, description, project_id, assigned_to, status, due_date, created_at, updated_at
-		 FROM tasks WHERE project_id = $1 ORDER BY id`,
-		projectID,
-	)
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+
+	var rows *sql.Rows
+	if q == "" {
+		rows, err = db.Query(
+			`SELECT id, title, description, project_id, assigned_to, status, due_date, created_at, updated_at
+			 FROM tasks WHERE project_id = $1 ORDER BY id`,
+			projectID,
+		)
+	} else {
+		pattern := "%" + q + "%"
+		rows, err = db.Query(
+			`SELECT id, title, description, project_id, assigned_to, status, due_date, created_at, updated_at
+			 FROM tasks
+			 WHERE project_id = $1 AND (title ILIKE $2 OR description ILIKE $2)
+			 ORDER BY id`,
+			projectID, pattern,
+		)
+	}
 	if err != nil {
 		http.Error(w, "failed to fetch tasks", http.StatusInternalServerError)
 		return
@@ -142,7 +163,11 @@ func updateTask(w http.ResponseWriter, r *http.Request) {
 
 	var assignedTo int
 	var projectID int
-	err = db.QueryRow("SELECT COALESCE(assigned_to, 0), project_id FROM tasks WHERE id = $1", taskID).Scan(&assignedTo, &projectID)
+	var prevStatus string
+	err = db.QueryRow(
+		"SELECT COALESCE(assigned_to, 0), project_id, status FROM tasks WHERE id = $1",
+		taskID,
+	).Scan(&assignedTo, &projectID, &prevStatus)
 	if err == sql.ErrNoRows {
 		http.Error(w, "task not found", http.StatusNotFound)
 		return
@@ -173,6 +198,15 @@ func updateTask(w http.ResponseWriter, r *http.Request) {
 	); err != nil {
 		http.Error(w, "failed to update task", http.StatusInternalServerError)
 		return
+	}
+
+	if prevStatus != task.Status {
+		recordEvent(&projectID, claims.ID, EventTaskStatusMoved, map[string]interface{}{
+			"task_id": taskID,
+			"title":   task.Title,
+			"from":    prevStatus,
+			"to":      task.Status,
+		})
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -215,10 +249,18 @@ func deleteTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var title string
+	_ = db.QueryRow("SELECT title FROM tasks WHERE id = $1", taskID).Scan(&title)
+
 	if _, err := db.Exec("DELETE FROM tasks WHERE id = $1", taskID); err != nil {
 		http.Error(w, "failed to delete task", http.StatusInternalServerError)
 		return
 	}
+
+	recordEvent(&projectID, claims.ID, EventTaskDeleted, map[string]interface{}{
+		"task_id": taskID,
+		"title":   title,
+	})
 
 	w.WriteHeader(http.StatusNoContent)
 }

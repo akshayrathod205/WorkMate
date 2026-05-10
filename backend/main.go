@@ -78,6 +78,7 @@ func main() {
 
 	protected.HandleFunc("/me", meHandler).Methods("GET")
 	protected.HandleFunc("/users", getUsers).Methods("GET")
+	protected.HandleFunc("/dashboard", dashboardHandler).Methods("GET")
 
 	protected.HandleFunc("/projects", getProjects).Methods("GET")
 	protected.HandleFunc("/projects/{id}", getSingleProject).Methods("GET")
@@ -90,6 +91,12 @@ func main() {
 	protected.HandleFunc("/tasks/create", createTask).Methods("POST")
 	protected.HandleFunc("/tasks/{id}/update", updateTask).Methods("PUT")
 	protected.HandleFunc("/tasks/{id}/delete", deleteTask).Methods("DELETE")
+
+	protected.HandleFunc("/tasks/{id}/comments", listComments).Methods("GET")
+	protected.HandleFunc("/tasks/{id}/comments", createComment).Methods("POST")
+	protected.HandleFunc("/comments/{id}", deleteComment).Methods("DELETE")
+
+	protected.HandleFunc("/projects/{id}/events", listProjectEvents).Methods("GET")
 
 	allowedOrigin := os.Getenv("CORS_ORIGIN")
 	if allowedOrigin == "" {

@@ -61,8 +61,22 @@ export const createProject = async (projectData) =>
 export const addTeamMembers = async (projectId, members) =>
   json(await request(`/projects/${projectId}/team`, { method: "POST", body: members }));
 
-export const getTasks = async (projectId) =>
-  json(await request(`/tasks/${projectId}`));
+export const getTasks = async (projectId, { q } = {}) => {
+  const path = q ? `/tasks/${projectId}?q=${encodeURIComponent(q)}` : `/tasks/${projectId}`;
+  return json(await request(path));
+};
+
+export const getProjectEvents = async (projectId, { limit = 50 } = {}) =>
+  json(await request(`/projects/${projectId}/events?limit=${limit}`));
+
+export const getComments = async (taskId) =>
+  json(await request(`/tasks/${taskId}/comments`));
+
+export const createComment = async (taskId, body) =>
+  json(await request(`/tasks/${taskId}/comments`, { method: "POST", body: { body } }));
+
+export const deleteComment = async (commentId) =>
+  request(`/comments/${commentId}`, { method: "DELETE" });
 
 export const createTask = async (taskData) =>
   json(await request("/tasks/create", { method: "POST", body: taskData }));
@@ -71,3 +85,5 @@ export const updateTask = async (taskId, taskData) =>
   request(`/tasks/${taskId}/update`, { method: "PUT", body: taskData });
 
 export const getUsers = async () => json(await request("/users"));
+
+export const getDashboard = async () => json(await request("/dashboard"));
